@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId, useCallback, useMemo } from 'react';
+import { useState, useEffect, useId, useCallback, useMemo, useRef, type CSSProperties, type JSX } from 'react';
 
 // ============================================================================
 // CONCESSIONS INVENTORY SYSTEM — Step-Through Walkthrough (TypeScript)
@@ -75,6 +75,8 @@ interface Theme {
   btnNav: ButtonStyle;
   btnNavDisabled: ButtonStyle;
   svgBg: string;
+  // NOTE: layerBgs[i] and layerLabels[i] are index-aligned with LAYERS.
+  // If LAYERS is reordered, these must be reordered to match.
   layerBgs: string[];
   layerLabels: string[];
   arrow: ArrowColors;
@@ -106,6 +108,8 @@ interface Layer {
 // ============================================================================
 
 const ARROWHEAD_GAP = 14;
+const STRAIGHT_LINE_THRESHOLD = 15;
+const SELF_LOOP_OFFSET = 10;
 
 const PHASES: Phase[] = [
   { id: 'base',      label: 'Base',           title: 'Core Architecture' },
@@ -228,8 +232,12 @@ const ARCHITECTURE_COMPONENTS: Record<ComponentKey, ArchComponent> = {
   stripe:           { x: 430, y: 460, w: 180, h: 50, label: 'Stripe',                 sub: 'Payments + Refunds',    type: 'external', rounded: false },
 };
 
-// Derived cumulative phase visibility
-const PHASE_ORDER: PhaseId[] = ['base', 'online', 'offline', 'reconcile'];
+// #1: Single assertion on static constant — avoids per-render `as` cast on Object.entries
+const COMPONENT_KEYS = Object.keys(ARCHITECTURE_COMPONENTS) as ComponentKey[];
+
+// #5: Derived from PHASES — single source of truth for phase ordering
+const PHASE_ORDER = PHASES.map(p => p.id);
+
 const PHASE_NEW_COMPONENTS: Record<PhaseId, ComponentKey[]> = {
   base:      ['clients', 'gateway', 'inventoryService', 'orderService', 'redis', 'postgres'],
   online:    ['prepQueue'],
@@ -265,12 +273,10 @@ function getArrowPath(sourceKey: ComponentKey, targetKey: ComponentKey): string 
   const endX = t.x + t.w / 2;
   const endY = goingDown ? t.y - ARROWHEAD_GAP : t.y + t.h + ARROWHEAD_GAP;
 
-  // Straight vertical when horizontally aligned (within 15px)
-  if (Math.abs(startX - endX) < 15) {
+  if (Math.abs(startX - endX) < STRAIGHT_LINE_THRESHOLD) {
     return `M${startX},${startY} L${endX},${endY}`;
   }
 
-  // L-shape: vertical → horizontal → vertical
   const midY = goingDown
     ? Math.round((startY + t.y) / 2)
     : Math.round((startY + (t.y + t.h)) / 2);
@@ -281,41 +287,45 @@ function getArrowPath(sourceKey: ComponentKey, targetKey: ComponentKey): string 
 function getSelfLoopPath(compKey: ComponentKey): string | null {
   const c = ARCHITECTURE_COMPONENTS[compKey];
   if (!c) return null;
-  const x = c.x + c.w - 10;
+  const x = c.x + c.w - SELF_LOOP_OFFSET;
   const y = c.y;
   return `M${x},${y} C${x + 40},${y - 35} ${x + 55},${y + c.h + 35} ${x},${y + c.h}`;
 }
 
 // ============================================================================
-// SVG SUB-COMPONENTS
+// SVG SUB-COMPONENTS (#4: plain functions instead of React.FC)
 // ============================================================================
 
-interface SvgDefsProps { theme: Theme; uid: string; }
-const SvgDefs: React.FC<SvgDefsProps> = ({ theme, uid }) => (
-  <defs>
-    <marker id={`${uid}-mSync`} markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
-      <polygon points="0 0,12 5,0 10" fill={theme.arrow.sync} />
-    </marker>
-    <marker id={`${uid}-mAsync`} markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
-      <polygon points="0 0,12 5,0 10" fill={theme.arrow.async} />
-    </marker>
-    <marker id={`${uid}-mActive`} markerWidth="14" markerHeight="12" refX="13" refY="6" orient="auto">
-      <polygon points="0 0,14 6,0 12" fill={theme.arrow.active} />
-    </marker>
-  </defs>
-);
+interface SvgDefsProps { theme: Theme; uid: string }
+function SvgDefs({ theme, uid }: SvgDefsProps): JSX.Element {
+  return (
+    <defs>
+      <marker id={`${uid}-mSync`} markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
+        <polygon points="0 0,12 5,0 10" fill={theme.arrow.sync} />
+      </marker>
+      <marker id={`${uid}-mAsync`} markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
+        <polygon points="0 0,12 5,0 10" fill={theme.arrow.async} />
+      </marker>
+      <marker id={`${uid}-mActive`} markerWidth="14" markerHeight="12" refX="13" refY="6" orient="auto">
+        <polygon points="0 0,14 6,0 12" fill={theme.arrow.active} />
+      </marker>
+    </defs>
+  );
+}
 
-interface LayerBackgroundsProps { theme: Theme; }
-const LayerBackgrounds: React.FC<LayerBackgroundsProps> = ({ theme }) => (
-  <g>
-    {LAYERS.map((l, i) => (
-      <g key={i}>
-        <rect x={50} y={l.y} width={970} height={l.h} fill={theme.layerBgs[i]} rx={10} />
-        <text x={70} y={l.y + 14} fontSize="10" fontWeight="700" fill={theme.layerLabels[i]} letterSpacing="1">{l.label}</text>
-      </g>
-    ))}
-  </g>
-);
+interface LayerBackgroundsProps { theme: Theme }
+function LayerBackgrounds({ theme }: LayerBackgroundsProps): JSX.Element {
+  return (
+    <g>
+      {LAYERS.map((l, i) => (
+        <g key={i}>
+          <rect x={50} y={l.y} width={970} height={l.h} fill={theme.layerBgs[i]} rx={10} />
+          <text x={70} y={l.y + 14} fontSize="10" fontWeight="700" fill={theme.layerLabels[i]} letterSpacing="1">{l.label}</text>
+        </g>
+      ))}
+    </g>
+  );
+}
 
 interface ComponentBoxProps {
   comp: ArchComponent;
@@ -324,7 +334,7 @@ interface ComponentBoxProps {
   highlighted: boolean;
   isSelfStep: boolean;
 }
-const ComponentBox: React.FC<ComponentBoxProps> = ({ comp, theme, dimmed, highlighted, isSelfStep }) => {
+function ComponentBox({ comp, theme, dimmed, highlighted, isSelfStep }: ComponentBoxProps): JSX.Element {
   const c = theme.comp[comp.type];
   const opacity = dimmed ? theme.dimmedOpacity : 1;
 
@@ -353,11 +363,11 @@ const ComponentBox: React.FC<ComponentBoxProps> = ({ comp, theme, dimmed, highli
       )}
     </g>
   );
-};
+}
 
-interface ArrowProps { step: Step; theme: Theme; uid: string; }
+interface ArrowProps { step: Step; theme: Theme; uid: string }
 
-const ActiveArrow: React.FC<ArrowProps> = ({ step, theme, uid }) => {
+function ActiveArrow({ step, theme, uid }: ArrowProps): JSX.Element | null {
   if (!step.source || !step.target) return null;
   const d = getArrowPath(step.source, step.target);
   if (!d) return null;
@@ -370,9 +380,9 @@ const ActiveArrow: React.FC<ArrowProps> = ({ step, theme, uid }) => {
         strokeDasharray={dash} markerEnd={`url(#${uid}-mActive)`} strokeLinejoin="round" />
     </g>
   );
-};
+}
 
-const SelfLoopArrow: React.FC<ArrowProps> = ({ step, theme, uid }) => {
+function SelfLoopArrow({ step, theme, uid }: ArrowProps): JSX.Element | null {
   if (!step.self) return null;
   const d = getSelfLoopPath(step.source);
   if (!d) return null;
@@ -384,109 +394,113 @@ const SelfLoopArrow: React.FC<ArrowProps> = ({ step, theme, uid }) => {
         strokeDasharray="6,4" markerEnd={`url(#${uid}-mActive)`} strokeLinejoin="round" />
     </g>
   );
-};
+}
 
-const TrailArrow: React.FC<ArrowProps> = ({ step, theme, uid }) => {
+function TrailArrow({ step, theme, uid }: ArrowProps): JSX.Element | null {
   if (!step.source || !step.target) return null;
   const d = getArrowPath(step.source, step.target);
   if (!d) return null;
-  const isA = step.isAsync;
+  const isAsync = step.isAsync;
   return (
     <path d={d} fill="none"
-      stroke={isA ? theme.arrow.async : theme.arrow.sync}
-      strokeWidth={2} strokeDasharray={isA ? '8,5' : 'none'}
-      markerEnd={`url(#${uid}-${isA ? 'mAsync' : 'mSync'})`}
+      stroke={isAsync ? theme.arrow.async : theme.arrow.sync}
+      strokeWidth={2} strokeDasharray={isAsync ? '8,5' : 'none'}
+      markerEnd={`url(#${uid}-${isAsync ? 'mAsync' : 'mSync'})`}
       opacity={0.25} strokeLinejoin="round" />
   );
-};
+}
 
 // ============================================================================
-// STYLES
+// STYLES (#6: satisfies for static objects, typed returns for functions)
 // ============================================================================
 
 const S = {
-  root: (bg: string): React.CSSProperties => ({ padding: 24, background: bg, minHeight: '100vh', transition: 'background 0.3s' }),
-  container: { maxWidth: 1100, margin: '0 auto' } as React.CSSProperties,
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 } as React.CSSProperties,
-  title: (color: string): React.CSSProperties => ({ fontSize: 28, fontWeight: 800, color, margin: 0 }),
-  subtitle: (color: string): React.CSSProperties => ({ color, fontSize: 16, margin: '4px 0 0' }),
-  themeBtn: (isDark: boolean): React.CSSProperties => ({
+  root: (bg: string): CSSProperties => ({ padding: 24, background: bg, minHeight: '100vh', transition: 'background 0.3s' }),
+  container: { maxWidth: 1100, margin: '0 auto' } satisfies CSSProperties,
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 } satisfies CSSProperties,
+  title: (color: string): CSSProperties => ({ fontSize: 28, fontWeight: 800, color, margin: 0 }),
+  subtitle: (color: string): CSSProperties => ({ color, fontSize: 16, margin: '4px 0 0' }),
+  themeBtn: (isDark: boolean): CSSProperties => ({
     padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 18,
     background: isDark ? '#334155' : '#e2e8f0', color: isDark ? '#fbbf24' : '#475569',
   }),
-  phaseRow: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' } as React.CSSProperties,
-  phaseBtn: (s: ButtonStyle, active: boolean): React.CSSProperties => ({
+  phaseRow: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' } satisfies CSSProperties,
+  phaseBtn: (s: ButtonStyle, active: boolean): CSSProperties => ({
     padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: 'pointer',
     border: active ? 'none' : `1px solid ${s.border || 'transparent'}`,
     background: s.bg, color: s.text,
     boxShadow: active ? s.shadow : 'none', transition: 'all 0.2s',
   }),
-  navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 } as React.CSSProperties,
-  navBtn: (enabled: boolean, bg: string, color: string): React.CSSProperties => ({
+  navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 } satisfies CSSProperties,
+  navBtn: (enabled: boolean, bg: string, color: string): CSSProperties => ({
     padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: 14, border: 'none',
     cursor: enabled ? 'pointer' : 'not-allowed', background: bg, color,
   }),
-  stepCounter: (color: string): React.CSSProperties => ({ color, fontWeight: 600, fontSize: 16 }),
-  showAllBtn: (theme: Theme): React.CSSProperties => ({
+  stepCounter: (color: string): CSSProperties => ({ color, fontWeight: 600, fontSize: 16 }),
+  showAllBtn: (theme: Theme): CSSProperties => ({
     padding: '6px 16px', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer',
     border: `1px solid ${theme.cardBorder}`, background: theme.cardBg, color: theme.textMuted, marginLeft: 8,
   }),
-  descCard: (t: DescCardTheme): React.CSSProperties => ({
+  descCard: (t: DescCardTheme): CSSProperties => ({
     background: t.bg, border: `2px solid ${t.border}`, borderRadius: 12,
     padding: 16, marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 14,
   }),
-  descLabel: (t: DescCardTheme): React.CSSProperties => ({
+  descLabel: (t: DescCardTheme): CSSProperties => ({
     background: t.labelBg, color: t.labelText, borderRadius: 8,
     padding: '6px 14px', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0, marginTop: 1,
   }),
-  descText: (color: string): React.CSSProperties => ({ margin: 0, color, fontSize: 15, lineHeight: 1.5 }),
-  svgCard: (t: Theme): React.CSSProperties => ({
+  descText: (color: string): CSSProperties => ({ margin: 0, color, fontSize: 15, lineHeight: 1.5 }),
+  svgCard: (t: Theme): CSSProperties => ({
     background: t.cardBg, border: `1px solid ${t.cardBorder}`, borderRadius: 14,
     padding: 20, marginBottom: 16, overflowX: 'auto', position: 'relative',
   }),
-  phaseFlash: (color: string): React.CSSProperties => ({
+  phaseFlash: (color: string): CSSProperties => ({
     position: 'absolute', inset: 0, background: color, borderRadius: 14, pointerEvents: 'none',
   }),
-  timelineCard: (t: Theme): React.CSSProperties => ({
+  timelineCard: (t: Theme): CSSProperties => ({
     background: t.cardBg, border: `1px solid ${t.cardBorder}`, borderRadius: 14,
     padding: 16, marginBottom: 16,
   }),
-  timelineRow: { display: 'flex', flexWrap: 'wrap', gap: 8 } as React.CSSProperties,
-  timelineBtn: (isCurrent: boolean, theme: Theme): React.CSSProperties => ({
+  timelineRow: { display: 'flex', flexWrap: 'wrap', gap: 8 } satisfies CSSProperties,
+  timelineBtn: (isCurrent: boolean, theme: Theme): CSSProperties => ({
     display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
     border: isCurrent ? `2px solid ${theme.accent}` : `1px solid ${theme.cardBorder}`,
     background: isCurrent ? theme.accentGlow : 'transparent', transition: 'all 0.2s',
   }),
-  timelineNum: (isCurrent: boolean, isPast: boolean, theme: Theme): React.CSSProperties => ({
+  timelineNum: (isCurrent: boolean, isPast: boolean, theme: Theme): CSSProperties => ({
     width: 24, height: 24, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 12, fontWeight: 700, flexShrink: 0,
     background: isCurrent ? theme.numBg : isPast ? theme.textMuted : 'transparent',
     color: isCurrent || isPast ? '#fff' : theme.textMuted,
     border: !isCurrent && !isPast ? `1px solid ${theme.textMuted}` : 'none',
   }),
-  timelineLabel: (isCurrent: boolean, theme: Theme): React.CSSProperties => ({
+  timelineLabel: (isCurrent: boolean, theme: Theme): CSSProperties => ({
     fontSize: 13, fontWeight: isCurrent ? 700 : 500,
     color: isCurrent ? theme.text : theme.textMuted, whiteSpace: 'nowrap',
   }),
-  legendCard: (t: Theme): React.CSSProperties => ({
+  legendCard: (t: Theme): CSSProperties => ({
     background: t.cardBg, border: `1px solid ${t.cardBorder}`, borderRadius: 14,
     padding: 14, display: 'flex', flexWrap: 'wrap', gap: 20, fontSize: 13,
     justifyContent: 'center',
   }),
-  legendItem: { display: 'flex', alignItems: 'center', gap: 8 } as React.CSSProperties,
-  footer: (color: string): React.CSSProperties => ({ textAlign: 'center', color, fontSize: 13, marginTop: 16 }),
+  legendItem: { display: 'flex', alignItems: 'center', gap: 8 } satisfies CSSProperties,
+  footer: (color: string): CSSProperties => ({ textAlign: 'center', color, fontSize: 13, marginTop: 16 }),
 };
 
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
-export default function ConcessionsWalkthrough(): React.JSX.Element {
-  const [phaseIdx, setPhaseIdx] = useState<number>(0);
-  const [stepIdx, setStepIdx] = useState<number>(0);
-  const [isDark, setIsDark] = useState<boolean>(true);
-  const [showAll, setShowAll] = useState<boolean>(false);
-  const [phaseFlash, setPhaseFlash] = useState<boolean>(false);
+export default function ConcessionsWalkthrough(): JSX.Element {
+  // #3: Let TS infer primitives from initial values
+  const [phaseIdx, setPhaseIdx] = useState(0);
+  const [stepIdx, setStepIdx] = useState(0);
+  const [isDark, setIsDark] = useState(true);
+  const [showAll, setShowAll] = useState(false);
+  const [phaseFlash, setPhaseFlash] = useState(false);
+
+  // #2: Timer ref for cleanup on unmount
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const uid = useId().replace(/:/g, '');
 
@@ -513,10 +527,15 @@ export default function ConcessionsWalkthrough(): React.JSX.Element {
     return steps.slice(0, stepIdx).filter(s => s.source && s.target);
   }, [steps, stepIdx, showAll]);
 
+  // #2: Phase flash with proper cleanup
   const triggerPhaseFlash = useCallback((): void => {
     setPhaseFlash(true);
-    setTimeout(() => setPhaseFlash(false), 400);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setPhaseFlash(false), 400);
   }, []);
+
+  // Cleanup timer on unmount
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
 
   const selectPhase = useCallback((idx: number): void => {
     setPhaseIdx(idx);
@@ -647,8 +666,10 @@ export default function ConcessionsWalkthrough(): React.JSX.Element {
               <TrailArrow key={`trail-${i}`} step={s} theme={theme} uid={uid} />
             ))}
 
-            {(Object.entries(ARCHITECTURE_COMPONENTS) as [ComponentKey, ArchComponent][]).map(([key, comp]) => {
+            {/* #1: Iterate COMPONENT_KEYS instead of casting Object.entries */}
+            {COMPONENT_KEYS.map((key) => {
               if (!visibleComps.includes(key)) return null;
+              const comp = ARCHITECTURE_COMPONENTS[key];
               const highlighted = activeComps.has(key);
               const dimmed = !showAll && !highlighted && activeComps.size > 0;
               const isSelfStep = !showAll && !!step.self && step.source === key;

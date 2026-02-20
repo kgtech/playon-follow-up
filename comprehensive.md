@@ -34,7 +34,7 @@ Design a real-time concessions inventory system for high school sporting events 
 - Handles burst traffic (halftime rush) without degradation
 - Maintains an immutable audit trail for all inventory changes
 
-**Physical Analogy:** Four cash registers at a high school concession stand share a whiteboard showing inventory counts. When Register A sells a Gatorade, someone updates the whiteboard and everyone sees it. If Register B loses WiFi, it gets a "take-home exam" — it can sell up to 25% of whatever was on the whiteboard when it disconnected. But if Gatorade was already marked "LOW," Register B can't sell it offline — too risky. When WiFi returns, Register B turns in its exam for grading and reconciliation.
+**Physical Analogy:** Four cash registers at a high school concession stand share a whiteboard showing inventory counts. When Register A sells a Gatorade, someone updates the whiteboard and everyone sees it. If Register B loses WiFi, it gets a "take-home exam": it can sell up to 25% of whatever was on the whiteboard when it disconnected. But if Gatorade was already marked "LOW," Register B can't sell it offline. When WiFi returns, Register B turns in its exam for grading and reconciliation.
 
 ---
 
@@ -69,7 +69,7 @@ Design a real-time concessions inventory system for high school sporting events 
 - **Online:** Redis atomic decrements prevent overselling; real-time broadcast keeps terminals synchronized
 - **Offline:** Terminals operate on proportional allocation (1/N of inventory); LOW_STOCK items locked out entirely
 
-The LOW_STOCK lockout is a dynamic circuit breaker — when inventory drops below threshold (default 10%, configurable per event), we block offline sales of that item. Online terminals can still sell it (they have real-time truth), but offline terminals skip it.
+The LOW_STOCK lockout is a dynamic circuit breaker: when inventory drops below threshold (default 10%, configurable per event), we block offline sales of that item. Online terminals can still sell it (they have real-time truth), but offline terminals skip it.
 
 ### Offline Allocation Math
 
@@ -91,7 +91,7 @@ Offline terminal's allocation:
 
 - **Honor all offline sales if inventory exists**
 - **Auto-refund to original payment method** if item physically unavailable
-- Refunds processed automatically via Stripe API — no manual intervention
+- Refunds processed automatically via Stripe API with no manual intervention
 
 ---
 
@@ -376,7 +376,7 @@ FOR each offline sale (chronologically):
   4. Return result to terminal
 ```
 
-**Idempotency:** Each offline sale has client-generated UUID. If sync retried (terminal lost connection mid-sync), return cached result — no double-decrements or double-refunds.
+**Idempotency:** Each offline sale has client-generated UUID. If sync retried (terminal lost connection mid-sync), return cached result. No double-decrements or double-refunds.
 
 ---
 
@@ -449,7 +449,7 @@ Enables: "Why was this sale slow?" and "Where did this transaction get stuck?"
 - Velocity-weighted allocation (simple 1/N)
 - Sophisticated monitoring (basic CloudWatch only)
 
-**Why this ordering:** Online sales with real-time sync is the core value prop — it solves "schools oversell because terminals don't share state." Offline support is critical for high school venues with unreliable WiFi. Everything else reduces edge cases but doesn't block launch.
+**Why this ordering:** Online sales with real-time sync is the core value prop: it solves "schools oversell because terminals don't share state." Offline support is critical for high school venues with unreliable WiFi. Everything else reduces edge cases but doesn't block launch.
 
 ### Future Iterations
 

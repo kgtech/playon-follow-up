@@ -71,8 +71,8 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 | Document | Description |
 |----------|-------------|
-| `executive-summary.md` | 2-3 page overview — architecture, key decisions, roadmap |
-| `comprehensive.md` | Full design doc (~12 pages) — entities, APIs, deep dives, monitoring |
+| `executive-summary.md` | 2-3 page overview with architecture, key decisions, roadmap |
+| `comprehensive.md` | Full design doc (~12 pages) with entities, APIs, deep dives, monitoring |
 
 ---
 

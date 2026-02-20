@@ -49,7 +49,7 @@ Design a real-time concessions inventory system for high school sporting events 
 
 **Strong consistency when online, bounded eventual consistency when offline.**
 
-Online terminals use Redis atomic operations — if two try to sell the last item, exactly one succeeds. Offline terminals operate on proportional allocation (1/N of inventory) with LOW_STOCK items blocked entirely to limit oversell risk.
+Online terminals use Redis atomic operations: if two try to sell the last item, exactly one succeeds. Offline terminals operate on proportional allocation (1/N of inventory) with LOW_STOCK items blocked entirely to limit oversell risk.
 
 ---
 
@@ -84,7 +84,7 @@ Redis atomic `DECRBY` operations prevent overselling when multiple terminals com
 
 ### 2. Proportional Offline Allocation
 
-When a terminal disconnects, it receives `inventory / terminal_count` as its offline budget. LOW_STOCK items (below configurable threshold, default 10%) are blocked from offline sale — too risky.
+When a terminal disconnects, it receives `inventory / terminal_count` as its offline budget. LOW_STOCK items (below configurable threshold, default 10%) are blocked from offline sale entirely.
 
 ### 3. Event Sourcing for Audit Trail
 
@@ -92,7 +92,7 @@ Every sale, restock, and adjustment is an immutable event. Current inventory is 
 
 ### 4. Outbox Pattern for Refunds
 
-When reconciliation detects an oversell that can't be honored, refund intent is written to an Outbox table in the same transaction. A separate Refund Worker processes Stripe refunds with idempotency keys — guaranteeing zero lost refunds even during Stripe outages.
+When reconciliation detects an oversell that can't be honored, refund intent is written to an Outbox table in the same transaction. A separate Refund Worker processes Stripe refunds with idempotency keys, guaranteeing zero lost refunds even during Stripe outages.
 
 ---
 
@@ -116,7 +116,7 @@ If shipping in 4 weeks, here's my priority stack:
 - Velocity-weighted allocation (use simple 1/N)
 - Sophisticated monitoring (basic CloudWatch, add dashboards in v2)
 
-**Why this ordering:** Online sales with real-time sync is the core value prop — it solves "schools oversell because terminals don't share state." Offline support is critical for high school venues with unreliable WiFi. Everything else reduces edge cases but doesn't block launch.
+**Why this ordering:** Online sales with real-time sync is the core value prop: it solves "schools oversell because terminals don't share state." Offline support is critical for high school venues with unreliable WiFi. Everything else reduces edge cases but doesn't block launch.
 
 ---
 

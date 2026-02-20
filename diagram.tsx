@@ -1,37 +1,133 @@
 import React, { useState, useEffect, useId, useCallback, useMemo } from 'react';
 
 // ============================================================================
-// CONCESSIONS INVENTORY SYSTEM — Step-Through Walkthrough
+// CONCESSIONS INVENTORY SYSTEM — Step-Through Walkthrough (TypeScript)
 // Click or use ← → arrow keys to trace each hop in the request flow.
 // Active arrow + components highlight with a description panel per step.
 // ============================================================================
 
-// --- Constants ---
+// ============================================================================
+// TYPE DEFINITIONS
+// ============================================================================
+
+type PhaseId = 'base' | 'online' | 'offline' | 'reconcile';
+
+type ComponentKey =
+  | 'clients' | 'gateway' | 'inventoryService' | 'orderService'
+  | 'redis' | 'postgres' | 'reconcileWorker' | 'prepQueue' | 'stripe';
+
+type ComponentType = 'clients' | 'gateway' | 'service' | 'redis' | 'postgres' | 'external';
+
+interface Phase {
+  id: PhaseId;
+  label: string;
+  title: string;
+}
+
+interface Step {
+  source: ComponentKey;
+  target: ComponentKey | null;
+  label: string;
+  desc: string;
+  isAsync?: boolean;
+  self?: boolean;
+}
+
+interface ColorSet {
+  color: string;
+  bg: string;
+  text: string;
+}
+
+interface ButtonStyle {
+  bg: string;
+  text: string;
+  shadow?: string;
+  border?: string;
+}
+
+interface DescCardTheme {
+  bg: string;
+  border: string;
+  text: string;
+  labelBg: string;
+  labelText: string;
+}
+
+interface ArrowColors {
+  sync: string;
+  async: string;
+  active: string;
+}
+
+interface Theme {
+  bg: string;
+  cardBg: string;
+  cardBorder: string;
+  text: string;
+  textMuted: string;
+  textSub: string;
+  accent: string;
+  accentGlow: string;
+  dimmedOpacity: number;
+  btnActive: ButtonStyle;
+  btnInactive: ButtonStyle;
+  btnNav: ButtonStyle;
+  btnNavDisabled: ButtonStyle;
+  svgBg: string;
+  layerBgs: string[];
+  layerLabels: string[];
+  arrow: ArrowColors;
+  comp: Record<ComponentType, ColorSet>;
+  descCard: DescCardTheme;
+  numBg: string;
+  phaseFlash: string;
+}
+
+interface ArchComponent {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+  sub: string;
+  type: ComponentType;
+  rounded: boolean;
+}
+
+interface Layer {
+  y: number;
+  h: number;
+  label: string;
+}
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 const ARROWHEAD_GAP = 14;
 
-// --- Phases ---
-const PHASES = [
+const PHASES: Phase[] = [
   { id: 'base',      label: 'Base',           title: 'Core Architecture' },
   { id: 'online',    label: 'Online Flow',    title: 'Real-Time Sales & Broadcast' },
   { id: 'offline',   label: 'Offline Flow',   title: 'Offline Sales & Local Storage' },
   { id: 'reconcile', label: 'Reconciliation', title: 'Sync & Conflict Resolution' },
 ];
 
-// --- Steps per phase ---
-const STEPS = {
+const STEPS: Record<PhaseId, Step[]> = {
   base: [
     { source: 'clients',          target: 'gateway',          label: 'Sale Request',  desc: 'POS terminal sends a sale request (item, quantity, terminal ID) to the API Gateway over REST.' },
     { source: 'gateway',          target: 'inventoryService', label: 'Reserve Stock', desc: 'Gateway routes to Inventory Service to reserve stock before creating the order.' },
     { source: 'inventoryService', target: 'redis',            label: 'DECRBY',        desc: 'Inventory Service atomically decrements the count in Redis. If the value goes below zero, the sale is rejected.' },
     { source: 'inventoryService', target: 'postgres',         label: 'Stock Event',   desc: 'Inventory Service writes a stock_decremented event to PostgreSQL for the durable audit trail.' },
     { source: 'gateway',          target: 'orderService',     label: 'Create Order',  desc: 'Gateway calls Order Service to create the order record now that stock is reserved.' },
-    { source: 'orderService',     target: 'postgres',         label: 'Order Event',   desc: 'Order Service writes an order_created event to PostgreSQL. This is async (outbox pattern) for delivery guarantee.', async: true },
+    { source: 'orderService',     target: 'postgres',         label: 'Order Event',   desc: 'Order Service writes an order_created event to PostgreSQL. This is async (outbox pattern) for delivery guarantee.', isAsync: true },
   ],
   online: [
     { source: 'inventoryService', target: 'redis',      label: 'Count Updated',  desc: 'After the decrement, the new count is available in Redis.' },
-    { source: 'redis',            target: 'gateway',    label: 'Pub/Sub',        desc: 'Redis Pub/Sub broadcasts the updated count to the API Gateway.', async: true },
+    { source: 'redis',            target: 'gateway',    label: 'Pub/Sub',        desc: 'Redis Pub/Sub broadcasts the updated count to the API Gateway.', isAsync: true },
     { source: 'gateway',          target: 'clients',    label: 'WebSocket Push', desc: 'Gateway pushes the new count to all connected terminals via WebSocket. Every POS screen updates in real time.' },
-    { source: 'orderService',     target: 'prepQueue',  label: 'Send Order',     desc: 'Order Service fires the order to the Prep Queue (fire-and-forget). Kitchen staff see it on their display.', async: true },
+    { source: 'orderService',     target: 'prepQueue',  label: 'Send Order',     desc: 'Order Service fires the order to the Prep Queue (fire-and-forget). Kitchen staff see it on their display.', isAsync: true },
   ],
   offline: [
     { source: 'clients', target: null,     label: 'Heartbeat Lost',   desc: 'Terminal detects lost connectivity — no WebSocket heartbeat for 5 seconds. Switches to offline mode.', self: true },
@@ -45,12 +141,15 @@ const STEPS = {
     { source: 'reconcileWorker', target: 'inventoryService', label: 'Attempt Decrement', desc: 'Worker calls Inventory Service to DECRBY in Redis for each offline sale. If count goes negative → conflict.' },
     { source: 'reconcileWorker', target: 'orderService',     label: 'Trigger Refund',    desc: 'For conflicted sales (oversold), Worker calls Order Service to initiate a refund.' },
     { source: 'orderService',    target: 'stripe',           label: 'Issue Refund',      desc: 'Order Service calls Stripe to refund the customer for items that were no longer available.' },
-    { source: 'stripe',          target: 'clients',          label: 'Refund Confirmation', desc: 'Stripe pushes a refund confirmation back to the terminal asynchronously.', async: true },
+    { source: 'stripe',          target: 'clients',          label: 'Refund Confirmation', desc: 'Stripe pushes a refund confirmation back to the terminal asynchronously.', isAsync: true },
   ],
 };
 
-// --- Themes (#5: removed unused labelPill, stepCard.bg/border) ---
-const THEMES = {
+// ============================================================================
+// THEMES
+// ============================================================================
+
+const THEMES: Record<'dark' | 'light', Theme> = {
   dark: {
     bg: '#0f172a',
     cardBg: '#1e293b',
@@ -60,7 +159,7 @@ const THEMES = {
     textSub: '#cbd5e1',
     accent: '#3b82f6',
     accentGlow: '#3b82f620',
-    dimmedOpacity: 0.3,         // #15: theme-aware dimmed opacity
+    dimmedOpacity: 0.3,
     btnActive:      { bg: '#3b82f6', text: '#ffffff', shadow: '0 4px 14px #3b82f640' },
     btnInactive:    { bg: '#1e293b', text: '#94a3b8', border: '#334155' },
     btnNav:         { bg: '#334155', text: '#f1f5f9' },
@@ -90,7 +189,7 @@ const THEMES = {
     textSub: '#475569',
     accent: '#2563eb',
     accentGlow: '#2563eb15',
-    dimmedOpacity: 0.38,        // #15: lighter dimming for light mode
+    dimmedOpacity: 0.38,
     btnActive:      { bg: '#0f172a', text: '#ffffff', shadow: '0 4px 14px #0f172a30' },
     btnInactive:    { bg: '#ffffff', text: '#64748b', border: '#e2e8f0' },
     btnNav:         { bg: '#0f172a', text: '#ffffff' },
@@ -113,8 +212,11 @@ const THEMES = {
   },
 };
 
-// --- 5-Layer Component Layout (#16: renamed from COMPS) ---
-const ARCHITECTURE_COMPONENTS = {
+// ============================================================================
+// 5-LAYER COMPONENT LAYOUT
+// ============================================================================
+
+const ARCHITECTURE_COMPONENTS: Record<ComponentKey, ArchComponent> = {
   clients:          { x: 410, y: 50,  w: 240, h: 50, label: 'POS Terminals + Mobile', sub: 'React Native, SQLite',  type: 'clients',  rounded: false },
   gateway:          { x: 410, y: 150, w: 240, h: 50, label: 'API Gateway',            sub: 'REST + WebSocket',      type: 'gateway',  rounded: false },
   inventoryService: { x: 180, y: 250, w: 200, h: 50, label: 'Inventory Service',      sub: 'Stock Management',      type: 'service',  rounded: false },
@@ -126,21 +228,21 @@ const ARCHITECTURE_COMPONENTS = {
   stripe:           { x: 430, y: 460, w: 180, h: 50, label: 'Stripe',                 sub: 'Payments + Refunds',    type: 'external', rounded: false },
 };
 
-// --- Derived cumulative phase visibility (#6: no more manual sync) ---
-const PHASE_ORDER = ['base', 'online', 'offline', 'reconcile'];
-const PHASE_NEW_COMPONENTS = {
+// Derived cumulative phase visibility
+const PHASE_ORDER: PhaseId[] = ['base', 'online', 'offline', 'reconcile'];
+const PHASE_NEW_COMPONENTS: Record<PhaseId, ComponentKey[]> = {
   base:      ['clients', 'gateway', 'inventoryService', 'orderService', 'redis', 'postgres'],
   online:    ['prepQueue'],
   offline:   ['stripe'],
   reconcile: ['reconcileWorker'],
 };
-const PHASE_COMPONENTS = PHASE_ORDER.reduce((acc, phase, i) => {
+const PHASE_COMPONENTS: Record<PhaseId, ComponentKey[]> = PHASE_ORDER.reduce((acc, phase, i) => {
   acc[phase] = [...(i > 0 ? acc[PHASE_ORDER[i - 1]] : []), ...PHASE_NEW_COMPONENTS[phase]];
   return acc;
-}, {});
+}, {} as Record<PhaseId, ComponentKey[]>);
 
-// --- Layer definitions ---
-const LAYERS = [
+// Layer definitions
+const LAYERS: Layer[] = [
   { y: 30,  h: 85,  label: 'PRESENTATION' },
   { y: 130, h: 85,  label: 'APPLICATION' },
   { y: 230, h: 85,  label: 'SERVICES' },
@@ -148,8 +250,11 @@ const LAYERS = [
   { y: 430, h: 100, label: 'WORKERS / EXTERNAL' },
 ];
 
-// --- Arrow path geometry (#8: returns string only, #13: cleaned vars, #14: uses ARROWHEAD_GAP) ---
-function getArrowPath(sourceKey, targetKey) {
+// ============================================================================
+// ARROW GEOMETRY
+// ============================================================================
+
+function getArrowPath(sourceKey: ComponentKey, targetKey: ComponentKey): string | null {
   const s = ARCHITECTURE_COMPONENTS[sourceKey];
   const t = ARCHITECTURE_COMPONENTS[targetKey];
   if (!s || !t) return null;
@@ -160,8 +265,8 @@ function getArrowPath(sourceKey, targetKey) {
   const endX = t.x + t.w / 2;
   const endY = goingDown ? t.y - ARROWHEAD_GAP : t.y + t.h + ARROWHEAD_GAP;
 
-  // Straight vertical when horizontally aligned
-  if (Math.abs(startX - endX) < 5) {
+  // Straight vertical when horizontally aligned (within 15px)
+  if (Math.abs(startX - endX) < 15) {
     return `M${startX},${startY} L${endX},${endY}`;
   }
 
@@ -173,8 +278,7 @@ function getArrowPath(sourceKey, targetKey) {
   return `M${startX},${startY} L${startX},${midY} L${endX},${midY} L${endX},${endY}`;
 }
 
-// --- Self-loop path (#10: visual indicator for self-referencing steps) ---
-function getSelfLoopPath(compKey) {
+function getSelfLoopPath(compKey: ComponentKey): string | null {
   const c = ARCHITECTURE_COMPONENTS[compKey];
   if (!c) return null;
   const x = c.x + c.w - 10;
@@ -186,8 +290,8 @@ function getSelfLoopPath(compKey) {
 // SVG SUB-COMPONENTS
 // ============================================================================
 
-// #3: SVG markers scoped with useId prefix to avoid collisions
-const SvgDefs = ({ theme, uid }) => (
+interface SvgDefsProps { theme: Theme; uid: string; }
+const SvgDefs: React.FC<SvgDefsProps> = ({ theme, uid }) => (
   <defs>
     <marker id={`${uid}-mSync`} markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
       <polygon points="0 0,12 5,0 10" fill={theme.arrow.sync} />
@@ -195,17 +299,14 @@ const SvgDefs = ({ theme, uid }) => (
     <marker id={`${uid}-mAsync`} markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
       <polygon points="0 0,12 5,0 10" fill={theme.arrow.async} />
     </marker>
-    <marker id={`${uid}-mActive`} markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
-      <polygon points="0 0,12 5,0 10" fill={theme.arrow.active} />
+    <marker id={`${uid}-mActive`} markerWidth="14" markerHeight="12" refX="13" refY="6" orient="auto">
+      <polygon points="0 0,14 6,0 12" fill={theme.arrow.active} />
     </marker>
-    <filter id={`${uid}-glow`}>
-      <feGaussianBlur stdDeviation="3" result="blur" />
-      <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-    </filter>
   </defs>
 );
 
-const LayerBackgrounds = ({ theme }) => (
+interface LayerBackgroundsProps { theme: Theme; }
+const LayerBackgrounds: React.FC<LayerBackgroundsProps> = ({ theme }) => (
   <g>
     {LAYERS.map((l, i) => (
       <g key={i}>
@@ -216,9 +317,16 @@ const LayerBackgrounds = ({ theme }) => (
   </g>
 );
 
-const ComponentBox = ({ comp, theme, dimmed, highlighted, isSelfStep }) => {
+interface ComponentBoxProps {
+  comp: ArchComponent;
+  theme: Theme;
+  dimmed: boolean;
+  highlighted: boolean;
+  isSelfStep: boolean;
+}
+const ComponentBox: React.FC<ComponentBoxProps> = ({ comp, theme, dimmed, highlighted, isSelfStep }) => {
   const c = theme.comp[comp.type];
-  const opacity = dimmed ? theme.dimmedOpacity : 1;  // #15: theme-aware
+  const opacity = dimmed ? theme.dimmedOpacity : 1;
 
   return (
     <g opacity={opacity}>
@@ -247,36 +355,42 @@ const ComponentBox = ({ comp, theme, dimmed, highlighted, isSelfStep }) => {
   );
 };
 
-// #7: Extracted from IIFE into proper components
-const ActiveArrow = ({ step, theme, uid }) => {
+interface ArrowProps { step: Step; theme: Theme; uid: string; }
+
+const ActiveArrow: React.FC<ArrowProps> = ({ step, theme, uid }) => {
   if (!step.source || !step.target) return null;
   const d = getArrowPath(step.source, step.target);
   if (!d) return null;
+  const dash = step.isAsync ? '10,6' : 'none';
   return (
-    <g filter={`url(#${uid}-glow)`}>
+    <g>
+      <path d={d} fill="none" stroke={theme.arrow.active} strokeWidth={10}
+        strokeDasharray={dash} opacity={0.2} strokeLinejoin="round" strokeLinecap="round" />
       <path d={d} fill="none" stroke={theme.arrow.active} strokeWidth={3.5}
-        strokeDasharray={step.async ? '10,6' : 'none'}
-        markerEnd={`url(#${uid}-mActive)`} strokeLinejoin="round" />
+        strokeDasharray={dash} markerEnd={`url(#${uid}-mActive)`} strokeLinejoin="round" />
     </g>
   );
 };
 
-const SelfLoopArrow = ({ step, theme, uid }) => {
+const SelfLoopArrow: React.FC<ArrowProps> = ({ step, theme, uid }) => {
   if (!step.self) return null;
   const d = getSelfLoopPath(step.source);
   if (!d) return null;
   return (
-    <g filter={`url(#${uid}-glow)`}>
+    <g>
+      <path d={d} fill="none" stroke={theme.arrow.active} strokeWidth={8}
+        strokeDasharray="6,4" opacity={0.2} strokeLinejoin="round" strokeLinecap="round" />
       <path d={d} fill="none" stroke={theme.arrow.active} strokeWidth={2.5}
         strokeDasharray="6,4" markerEnd={`url(#${uid}-mActive)`} strokeLinejoin="round" />
     </g>
   );
 };
 
-const TrailArrow = ({ step, theme, uid }) => {
+const TrailArrow: React.FC<ArrowProps> = ({ step, theme, uid }) => {
+  if (!step.source || !step.target) return null;
   const d = getArrowPath(step.source, step.target);
   if (!d) return null;
-  const isA = step.async;
+  const isA = step.isAsync;
   return (
     <path d={d} fill="none"
       stroke={isA ? theme.arrow.async : theme.arrow.sync}
@@ -287,93 +401,93 @@ const TrailArrow = ({ step, theme, uid }) => {
 };
 
 // ============================================================================
-// STYLES (#4: extracted from inline objects)
+// STYLES
 // ============================================================================
 
 const S = {
-  root: (bg) => ({ padding: 24, background: bg, minHeight: '100vh', transition: 'background 0.3s' }),
-  container: { maxWidth: 1100, margin: '0 auto' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
-  title: (color) => ({ fontSize: 28, fontWeight: 800, color, margin: 0 }),
-  subtitle: (color) => ({ color, fontSize: 16, margin: '4px 0 0' }),
-  themeBtn: (isDark) => ({
+  root: (bg: string): React.CSSProperties => ({ padding: 24, background: bg, minHeight: '100vh', transition: 'background 0.3s' }),
+  container: { maxWidth: 1100, margin: '0 auto' } as React.CSSProperties,
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 } as React.CSSProperties,
+  title: (color: string): React.CSSProperties => ({ fontSize: 28, fontWeight: 800, color, margin: 0 }),
+  subtitle: (color: string): React.CSSProperties => ({ color, fontSize: 16, margin: '4px 0 0' }),
+  themeBtn: (isDark: boolean): React.CSSProperties => ({
     padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 18,
     background: isDark ? '#334155' : '#e2e8f0', color: isDark ? '#fbbf24' : '#475569',
   }),
-  phaseRow: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' },
-  phaseBtn: (s, active) => ({
+  phaseRow: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' } as React.CSSProperties,
+  phaseBtn: (s: ButtonStyle, active: boolean): React.CSSProperties => ({
     padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: 'pointer',
     border: active ? 'none' : `1px solid ${s.border || 'transparent'}`,
     background: s.bg, color: s.text,
     boxShadow: active ? s.shadow : 'none', transition: 'all 0.2s',
   }),
-  navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  navBtn: (enabled, bg, color) => ({
+  navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 } as React.CSSProperties,
+  navBtn: (enabled: boolean, bg: string, color: string): React.CSSProperties => ({
     padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: 14, border: 'none',
     cursor: enabled ? 'pointer' : 'not-allowed', background: bg, color,
   }),
-  stepCounter: (color) => ({ color, fontWeight: 600, fontSize: 16 }),
-  showAllBtn: (theme) => ({
+  stepCounter: (color: string): React.CSSProperties => ({ color, fontWeight: 600, fontSize: 16 }),
+  showAllBtn: (theme: Theme): React.CSSProperties => ({
     padding: '6px 16px', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer',
     border: `1px solid ${theme.cardBorder}`, background: theme.cardBg, color: theme.textMuted, marginLeft: 8,
   }),
-  descCard: (t) => ({
+  descCard: (t: DescCardTheme): React.CSSProperties => ({
     background: t.bg, border: `2px solid ${t.border}`, borderRadius: 12,
     padding: 16, marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 14,
   }),
-  descLabel: (t) => ({
+  descLabel: (t: DescCardTheme): React.CSSProperties => ({
     background: t.labelBg, color: t.labelText, borderRadius: 8,
     padding: '6px 14px', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0, marginTop: 1,
   }),
-  descText: (color) => ({ margin: 0, color, fontSize: 15, lineHeight: 1.5 }),
-  svgCard: (t) => ({
+  descText: (color: string): React.CSSProperties => ({ margin: 0, color, fontSize: 15, lineHeight: 1.5 }),
+  svgCard: (t: Theme): React.CSSProperties => ({
     background: t.cardBg, border: `1px solid ${t.cardBorder}`, borderRadius: 14,
     padding: 20, marginBottom: 16, overflowX: 'auto', position: 'relative',
   }),
-  phaseFlash: (color) => ({
+  phaseFlash: (color: string): React.CSSProperties => ({
     position: 'absolute', inset: 0, background: color, borderRadius: 14, pointerEvents: 'none',
   }),
-  timelineCard: (t) => ({
+  timelineCard: (t: Theme): React.CSSProperties => ({
     background: t.cardBg, border: `1px solid ${t.cardBorder}`, borderRadius: 14,
     padding: 16, marginBottom: 16,
   }),
-  timelineRow: { display: 'flex', flexWrap: 'wrap', gap: 8 },
-  timelineBtn: (isCurrent, theme) => ({
+  timelineRow: { display: 'flex', flexWrap: 'wrap', gap: 8 } as React.CSSProperties,
+  timelineBtn: (isCurrent: boolean, theme: Theme): React.CSSProperties => ({
     display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
     border: isCurrent ? `2px solid ${theme.accent}` : `1px solid ${theme.cardBorder}`,
     background: isCurrent ? theme.accentGlow : 'transparent', transition: 'all 0.2s',
   }),
-  timelineNum: (isCurrent, isPast, theme) => ({
+  timelineNum: (isCurrent: boolean, isPast: boolean, theme: Theme): React.CSSProperties => ({
     width: 24, height: 24, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 12, fontWeight: 700, flexShrink: 0,
     background: isCurrent ? theme.numBg : isPast ? theme.textMuted : 'transparent',
     color: isCurrent || isPast ? '#fff' : theme.textMuted,
     border: !isCurrent && !isPast ? `1px solid ${theme.textMuted}` : 'none',
   }),
-  timelineLabel: (isCurrent, theme) => ({
+  timelineLabel: (isCurrent: boolean, theme: Theme): React.CSSProperties => ({
     fontSize: 13, fontWeight: isCurrent ? 700 : 500,
     color: isCurrent ? theme.text : theme.textMuted, whiteSpace: 'nowrap',
   }),
-  legendCard: (t) => ({
+  legendCard: (t: Theme): React.CSSProperties => ({
     background: t.cardBg, border: `1px solid ${t.cardBorder}`, borderRadius: 14,
     padding: 14, display: 'flex', flexWrap: 'wrap', gap: 20, fontSize: 13,
+    justifyContent: 'center',
   }),
-  legendItem: { display: 'flex', alignItems: 'center', gap: 8 },
-  footer: (color) => ({ textAlign: 'center', color, fontSize: 13, marginTop: 16 }),
+  legendItem: { display: 'flex', alignItems: 'center', gap: 8 } as React.CSSProperties,
+  footer: (color: string): React.CSSProperties => ({ textAlign: 'center', color, fontSize: 13, marginTop: 16 }),
 };
 
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
-export default function ConcessionsWalkthrough() {
-  const [phaseIdx, setPhaseIdx] = useState(0);
-  const [stepIdx, setStepIdx] = useState(0);
-  const [isDark, setIsDark] = useState(true);
-  const [showAll, setShowAll] = useState(false);      // #9: show-all mode
-  const [phaseFlash, setPhaseFlash] = useState(false); // #11: transition flash
+export default function ConcessionsWalkthrough(): React.JSX.Element {
+  const [phaseIdx, setPhaseIdx] = useState<number>(0);
+  const [stepIdx, setStepIdx] = useState<number>(0);
+  const [isDark, setIsDark] = useState<boolean>(true);
+  const [showAll, setShowAll] = useState<boolean>(false);
+  const [phaseFlash, setPhaseFlash] = useState<boolean>(false);
 
-  // #3: Unique prefix for SVG IDs — avoids collisions on double-mount
   const uid = useId().replace(/:/g, '');
 
   const theme = isDark ? THEMES.dark : THEMES.light;
@@ -382,10 +496,9 @@ export default function ConcessionsWalkthrough() {
   const step = steps[stepIdx];
   const visibleComps = PHASE_COMPONENTS[phase.id];
 
-  // Active components for current step
-  const activeComps = useMemo(() => {
+  const activeComps = useMemo<Set<ComponentKey>>(() => {
     if (showAll) return new Set();
-    const set = new Set();
+    const set = new Set<ComponentKey>();
     if (step.self) {
       set.add(step.source);
     } else {
@@ -395,27 +508,24 @@ export default function ConcessionsWalkthrough() {
     return set;
   }, [step, showAll]);
 
-  // Trail arrows: all previous hops (or all hops in show-all mode)
-  const prevArrows = useMemo(() => {
+  const prevArrows = useMemo<Step[]>(() => {
     if (showAll) return steps.filter(s => s.source && s.target);
     return steps.slice(0, stepIdx).filter(s => s.source && s.target);
   }, [steps, stepIdx, showAll]);
 
-  // #11: Flash on phase change
-  const triggerPhaseFlash = useCallback(() => {
+  const triggerPhaseFlash = useCallback((): void => {
     setPhaseFlash(true);
     setTimeout(() => setPhaseFlash(false), 400);
   }, []);
 
-  const selectPhase = useCallback((idx) => {
+  const selectPhase = useCallback((idx: number): void => {
     setPhaseIdx(idx);
     setStepIdx(0);
     setShowAll(false);
     triggerPhaseFlash();
   }, [triggerPhaseFlash]);
 
-  // #2: prevStep crosses phase boundaries
-  const prevStep = useCallback(() => {
+  const prevStep = useCallback((): void => {
     setShowAll(false);
     if (stepIdx > 0) {
       setStepIdx(stepIdx - 1);
@@ -427,7 +537,7 @@ export default function ConcessionsWalkthrough() {
     }
   }, [stepIdx, phaseIdx, triggerPhaseFlash]);
 
-  const nextStep = useCallback(() => {
+  const nextStep = useCallback((): void => {
     setShowAll(false);
     if (stepIdx < steps.length - 1) {
       setStepIdx(stepIdx + 1);
@@ -438,8 +548,7 @@ export default function ConcessionsWalkthrough() {
     }
   }, [stepIdx, steps.length, phaseIdx, triggerPhaseFlash]);
 
-  // #9: Toggle show-all mode
-  const toggleShowAll = useCallback(() => {
+  const toggleShowAll = useCallback((): void => {
     setShowAll(prev => !prev);
     setStepIdx(steps.length - 1);
   }, [steps.length]);
@@ -447,9 +556,8 @@ export default function ConcessionsWalkthrough() {
   const isFirst = phaseIdx === 0 && stepIdx === 0;
   const isLast = phaseIdx === PHASES.length - 1 && stepIdx === steps.length - 1;
 
-  // #1: Keyboard navigation (← → arrow keys)
   useEffect(() => {
-    const handleKey = (e) => {
+    const handleKey = (e: KeyboardEvent): void => {
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); nextStep(); }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); prevStep(); }
     };
@@ -517,7 +625,7 @@ export default function ConcessionsWalkthrough() {
         {!showAll && (
           <div style={S.descCard(theme.descCard)}>
             <div style={S.descLabel(theme.descCard)}>
-              {step.label}{step.async ? ' ⚡' : ''}{step.self ? ' ⟳' : ''}
+              {step.label}{step.isAsync ? ' ⚡' : ''}{step.self ? ' ⟳' : ''}
             </div>
             <p style={S.descText(theme.descCard.text)}>{step.desc}</p>
           </div>
@@ -525,7 +633,6 @@ export default function ConcessionsWalkthrough() {
 
         {/* Diagram */}
         <div style={S.svgCard(theme)}>
-          {/* #11: Phase transition flash overlay */}
           {phaseFlash && (
             <div style={{ ...S.phaseFlash(theme.phaseFlash), animation: 'phaseFlashOut 0.4s ease-out forwards' }} />
           )}
@@ -536,34 +643,31 @@ export default function ConcessionsWalkthrough() {
             <rect x="0" y="0" width="1070" height="560" fill={theme.svgBg} rx="12" />
             <LayerBackgrounds theme={theme} />
 
-            {/* Trail arrows */}
             {prevArrows.map((s, i) => (
               <TrailArrow key={`trail-${i}`} step={s} theme={theme} uid={uid} />
             ))}
 
-            {/* Active arrow or self-loop (hidden in show-all) */}
+            {(Object.entries(ARCHITECTURE_COMPONENTS) as [ComponentKey, ArchComponent][]).map(([key, comp]) => {
+              if (!visibleComps.includes(key)) return null;
+              const highlighted = activeComps.has(key);
+              const dimmed = !showAll && !highlighted && activeComps.size > 0;
+              const isSelfStep = !showAll && !!step.self && step.source === key;
+              return (
+                <ComponentBox key={key} comp={comp} theme={theme}
+                  highlighted={highlighted} dimmed={dimmed} isSelfStep={isSelfStep} />
+              );
+            })}
+
             {!showAll && (
               <>
                 <ActiveArrow step={step} theme={theme} uid={uid} />
                 <SelfLoopArrow step={step} theme={theme} uid={uid} />
               </>
             )}
-
-            {/* Components */}
-            {Object.entries(ARCHITECTURE_COMPONENTS).map(([key, comp]) => {
-              if (!visibleComps.includes(key)) return null;
-              const highlighted = activeComps.has(key);
-              const dimmed = !showAll && !highlighted && activeComps.size > 0;
-              const isSelfStep = !showAll && step.self && step.source === key;
-              return (
-                <ComponentBox key={key} comp={comp} theme={theme}
-                  highlighted={highlighted} dimmed={dimmed} isSelfStep={isSelfStep} />
-              );
-            })}
           </svg>
         </div>
 
-        {/* Step timeline (#12: async ⚡ and self ⟳ indicators on chips) */}
+        {/* Step timeline */}
         <div style={S.timelineCard(theme)}>
           <div style={S.timelineRow}>
             {steps.map((s, i) => {
@@ -576,7 +680,7 @@ export default function ConcessionsWalkthrough() {
                     {isPast ? '✓' : i + 1}
                   </span>
                   <span style={S.timelineLabel(isCurrent, theme)}>
-                    {s.label}{s.async ? ' ⚡' : ''}{s.self ? ' ⟳' : ''}
+                    {s.label}{s.isAsync ? ' ⚡' : ''}{s.self ? ' ⟳' : ''}
                   </span>
                 </button>
               );
@@ -599,13 +703,13 @@ export default function ConcessionsWalkthrough() {
             <span style={{ color: theme.textSub }}>Previous (async)</span>
           </div>
           <div style={S.legendItem}>
-            <span style={{ color: theme.textMuted }}>⚡ async</span>
+            <span style={{ color: theme.textMuted }}>⚡ Async</span>
           </div>
           <div style={S.legendItem}>
-            <span style={{ color: theme.textMuted }}>⟳ self-action</span>
+            <span style={{ color: theme.textMuted }}>⟳ Self-Action</span>
           </div>
           <div style={S.legendItem}>
-            <span style={{ color: theme.textMuted }}>← → keyboard nav</span>
+            <span style={{ color: theme.textMuted }}>← → Keyboard Nav</span>
           </div>
         </div>
 

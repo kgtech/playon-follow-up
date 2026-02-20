@@ -96,18 +96,6 @@ When reconciliation detects an oversell that can't be honored, refund intent is 
 
 ---
 
-## Scale & Domain Transfer
-
-**Q: "High school concessions is completely different scale and stakes than enterprise healthcare. How do these patterns apply?"**
-
-**Scale:** The patterns I've built handle ~1,200 events/sec across multiple tenants. A high school event with 10 terminals at 200 sales/minute peak is 3-4 ops/sec. These patterns are appropriately sized — I'm proposing Redis Pub/Sub for a 10-terminal venue, not Kafka.
-
-**Stakes:** A $5 hot dog isn't a healthcare compliance event, but the system properties are identical: durability (don't lose sales), consistency (don't oversell), availability (keep the line moving). The patterns for preventing data loss, handling offline operation, and reconciling conflicts are domain-agnostic.
-
-**What's different:** Healthcare has stricter audit requirements and longer retention. Concessions has simpler data, shorter retention, and lower consequence per failure. I'd adjust implementation complexity accordingly — simpler monitoring, less redundancy, faster iteration. But the architectural bones are the same.
-
----
-
 ## Prioritization & Roadmap
 
 If shipping in 4 weeks, here's my priority stack:

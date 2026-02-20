@@ -461,23 +461,6 @@ Enables: "Why was this sale slow?" and "Where did this transaction get stuck?"
 
 ---
 
-## Scale & Domain Transfer
-
-**Q: "High school concessions is completely different scale and stakes than enterprise healthcare. How do these patterns apply?"**
-
-**Scale:** The patterns I've built handle ~1,200 events/sec across multiple tenants. A high school event with 10 terminals at 200 sales/minute peak is 3-4 ops/sec. These patterns are appropriately sized — I'm proposing Redis Pub/Sub for a 10-terminal venue, not Kafka.
-
-**Stakes:** A $5 hot dog isn't a healthcare compliance event, but the system properties are identical:
-- **Durability** — don't lose sales
-- **Consistency** — don't oversell  
-- **Availability** — keep the line moving
-
-The patterns for preventing data loss, handling offline operation, and reconciling conflicts are domain-agnostic.
-
-**What's different:** Healthcare has stricter audit requirements (HIPAA) and longer retention (7 years). Concessions has simpler data, shorter retention (end of season), and lower consequence per failure. I'd adjust implementation complexity accordingly — simpler monitoring, less redundancy, faster iteration. But the architectural bones are the same.
-
----
-
 ## Summary
 
 This design provides real-time inventory synchronization across multiple POS terminals using Redis for atomic operations and WebSocket for broadcast, with robust offline support using proportional allocation and LOW_STOCK lockout to bound oversell risk.

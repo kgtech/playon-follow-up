@@ -8,15 +8,18 @@ Kenneth Glenn | February 2025
 
 ## 📊 Interactive Architecture Diagram
 
-This repo contains an interactive React diagram that walks through the concessions inventory system design phase-by-phase.
+This repo contains an interactive TypeScript + React diagram that walks through the concessions inventory system architecture as a step-by-step walkthrough.
 
 ### Features
 
-- **Phase-by-phase walkthrough:** Base → Real-Time Broadcast → Offline Support → Admin/Audit → Deep Dives
-- **Two view modes:** Architecture diagram and Sequence diagram
-- **Color-coded swim lanes:** Clients, Gateway, Services, Cache, Data, External
-- **Narration:** "Say out loud" guidance for each phase
-- **Deep dive highlights:** Components added during deep dives shown with dashed borders
+- **Step-through walkthrough:** Click Next or use ← → arrow keys to trace each hop in the request flow
+- **4 phases:** Base Architecture → Online Flow → Offline Flow → Reconciliation
+- **5-layer layout:** Presentation, Application, Services, Data, Workers/External
+- **Dark / light mode toggle**
+- **Show All mode:** View the complete architecture at a glance
+- **Phase transition animations** with visual flash on phase change
+- **Async + self-action indicators** on both the diagram and step timeline
+- **Halo-highlighted active arrows** rendered on top of components for visibility
 
 ---
 
@@ -24,8 +27,8 @@ This repo contains an interactive React diagram that walks through the concessio
 
 ### Prerequisites
 
-- Node.js 18+ 
-- npm or yarn
+- Node.js 18+
+- npm
 
 ### Run Locally
 
@@ -48,125 +51,41 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 ## 📁 Project Structure
 
 ```
-├── diagram.jsx          # Main interactive diagram component
-├── package.json         # Dependencies (React, Vite)
-├── index.html           # Entry point
-├── main.jsx             # React mount
-└── README.md            # This file
-```
-
----
-
-## 🛠️ Setup Files
-
-If you're starting from just the `diagram.jsx` file, here's the minimal setup:
-
-### package.json
-
-```json
-{
-  "name": "concessions-inventory-diagram",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.0",
-    "vite": "^5.0.0",
-    "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.32",
-    "tailwindcss": "^3.4.0"
-  }
-}
-```
-
-### index.html
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Concessions Inventory System - Architecture Diagram</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/main.jsx"></script>
-  </body>
-</html>
-```
-
-### main.jsx
-
-```jsx
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import ConcessionsInventoryDiagram from './diagram.jsx'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <ConcessionsInventoryDiagram />
-  </React.StrictMode>,
-)
-```
-
-### index.css
-
-```css
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-```
-
-### tailwind.config.js
-
-```js
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./*.jsx",
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-}
-```
-
-### postcss.config.js
-
-```js
-export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-}
+├── diagram.tsx              # Interactive walkthrough diagram (TypeScript)
+├── main.tsx                 # React mount
+├── index.html               # Entry point
+├── index.css                # Tailwind imports
+├── package.json             # Dependencies + scripts
+├── vite.config.js           # Vite config (base path for GitHub Pages)
+├── tailwind.config.js       # Tailwind config
+├── postcss.config.js        # PostCSS config
+├── eslint.config.js         # ESLint 9 flat config
+├── comprehensive.md         # Full system design document (~12 pages)
+├── executive-summary.md     # 2-3 page overview for hiring manager
+└── README.md                # This file
 ```
 
 ---
 
 ## 📄 Design Documents
 
-This repo also includes written summaries of the system design:
-
 | Document | Description |
 |----------|-------------|
-| `docs/brief.md` | 1-2 page summary |
-| `docs/executive-summary.md` | 2-3 page overview |
-| `docs/detailed.md` | 5-7 pages with entities/APIs |
-| `docs/comprehensive.md` | Full design doc (~12 pages) |
+| `executive-summary.md` | 2-3 page overview — architecture, key decisions, roadmap |
+| `comprehensive.md` | Full design doc (~12 pages) — entities, APIs, deep dives, monitoring |
+
+---
+
+## 🛠️ Tech Stack
+
+| Category | Tools |
+|----------|-------|
+| Language | TypeScript, JSX |
+| Framework | React 18 |
+| Build | Vite 7 |
+| Styling | Tailwind CSS, inline `CSSProperties` |
+| Linting | ESLint 9 with eslint-plugin-react |
+| Rendering | SVG (architecture diagram, arrows, layers) |
 
 ---
 
@@ -187,6 +106,17 @@ The concessions inventory system provides:
 3. **Event sourcing** — Full auditability, point-in-time reconstruction
 4. **Outbox Pattern** — Reliable Stripe refunds, zero lost transactions
 5. **Graceful degradation** — Offline mode is the universal safety valve
+
+---
+
+## 📜 Scripts
+
+```bash
+npm run dev       # Start Vite dev server
+npm run build     # Production build to dist/
+npm run preview   # Preview production build
+npm run audit     # Check production vulnerabilities only (omits dev deps)
+```
 
 ---
 
